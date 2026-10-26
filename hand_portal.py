@@ -202,7 +202,7 @@ class RetrolensHandTracker:
                     pts = [(int(lm.x * w), int(lm.y * h)) for lm in hand]
                     skeleton.append(pts)
 
-                return True, [l_index, l_thumb, r_thumb, r_index], skeleton, is_pinched
+                return True, [l_index, l_thumb, r_thumb, r_index], skeleton, is_pinched, {"num_hands": 2, "is_index_raised": False, "index_tip": None}
 
             elif result.hand_landmarks and len(result.hand_landmarks) == 1:
                 hand = result.hand_landmarks[0]
@@ -221,10 +221,32 @@ class RetrolensHandTracker:
                 p2 = tmb_tip
                 p3 = idx_tip
                 p4 = (idx_tip[0] - dy, idx_tip[1] + dx)
-                
-                return True, [p1, p2, p3, p4], [pts], is_pinched
 
-        return False, [], [], False
+                # Deteksi telunjuk diangkat (Single Hand Index Raised Gesture)
+                w_pt = (hand[0].x, hand[0].y)
+                idx_tip_pt = (hand[8].x, hand[8].y)
+                idx_pip_pt = (hand[6].x, hand[6].y)
+                mid_tip_pt = (hand[12].x, hand[12].y)
+                mid_pip_pt = (hand[10].x, hand[10].y)
+
+                dist_idx_tip = math.hypot(idx_tip_pt[0] - w_pt[0], idx_tip_pt[1] - w_pt[1])
+                dist_idx_pip = math.hypot(idx_pip_pt[0] - w_pt[0], idx_pip_pt[1] - w_pt[1])
+                dist_mid_tip = math.hypot(mid_tip_pt[0] - w_pt[0], mid_tip_pt[1] - w_pt[1])
+                dist_mid_pip = math.hypot(mid_pip_pt[0] - w_pt[0], mid_pip_pt[1] - w_pt[1])
+
+                index_extended = dist_idx_tip > dist_idx_pip * 1.05
+                middle_folded = dist_mid_tip < dist_mid_pip * 1.1 or hand[12].y > hand[10].y
+                is_index_raised = index_extended and middle_folded
+
+                single_info = {
+                    "num_hands": 1,
+                    "is_index_raised": is_index_raised,
+                    "index_tip": idx_tip
+                }
+                
+                return True, [p1, p2, p3, p4], [pts], is_pinched, single_info
+
+        return False, [], [], False, {"num_hands": 0, "is_index_raised": False, "index_tip": None}
 
     def close(self):
         if self.landmarker is not None:
@@ -257,11 +279,12 @@ def main():
     print("==================================================")
     print("      RETROLENS - HAND PORTAL CAMERA FRAME")
     print("==================================================")
-    print("Fitur Gestur Pintu Portal:")
-    print("  * Dekatkan/Sentuhkan Telunjuk & Jempol Kedua Tangan -> Ganti Filter Otomatis!")
-    print("  * Bila Tangan Tidak Terdeteksi -> Tampilan Frame Bersih Tanpa Box Overlay")
+    print("Fitur Gestur:")
+    print("  * 2 Tangan: Sentuhkan Telunjuk & Jempol -> Ganti Filter Otomatis!")
+    print("  * 1 Tangan: Angkat Jari Telunjuk -> Mode Coret-coret / Drawing Video!")
     print("Panduan Tombol:")
     print("  [1 - 6]   : Ganti Manual Filter Lens")
+    print("  [C]       : Bersihkan Coretan (Clear Canvas)")
     print("  [SPACE/S] : Ambil Foto / Tangkap Layar Frame Portal")
     print("  [G]       : Ganti Tingkat Film Grain Noise (OFF / LIGHT / HEAVY)")
     print("  [H]       : Toggle Tampilan HUD Overlay")
@@ -295,6 +318,10 @@ def main():
     pinch_triggered = False
     pinch_flash_frames = 0
 
+    # Canvas untuk fitur coret-coret dengan 1 jari telunjuk
+    drawing_canvas = np.zeros((720, 1280, 3), dtype=np.uint8)
+    prev_draw_pt = None
+
     smooth_quad = np.array([[320, 180], [320, 540], [960, 540], [960, 180]], dtype=np.float32)
 
     frame_count = 0
@@ -315,9 +342,34 @@ def main():
         quad_pts = []
         skeletons = []
         is_pinched = False
+        single_info = {"num_hands": 0, "is_index_raised": False, "index_tip": None}
 
         if not mouse_mode:
-            hand_detected, quad_pts, skeletons, is_pinched = tracker.detect_hands(frame)
+            hand_detected, quad_pts, skeletons, is_pinched, single_info = tracker.detect_hands(frame)
+
+        # Ensure drawing_canvas matches frame size if resolution changes
+        if drawing_canvas.shape[:2] != (h, w):
+            drawing_canvas = np.zeros((h, w, 3), dtype=np.uint8)
+
+        # Process Single Hand Index Finger Drawing (Coret-coret)
+        is_drawing = False
+        draw_color = (0, 255, 255)
+        if single_info.get("num_hands") == 1 and single_info.get("is_index_raised") and single_info.get("index_tip") is not None:
+            is_drawing = True
+            curr_pt = single_info["index_tip"]
+
+            # Warna neon rainbow dinamis
+            hue = (frame_count * 3) % 180
+            color_bgr = cv2.cvtColor(np.uint8([[[hue, 255, 255]]]), cv2.COLOR_HSV2BGR)[0][0]
+            draw_color = (int(color_bgr[0]), int(color_bgr[1]), int(color_bgr[2]))
+
+            if prev_draw_pt is not None:
+                # Garis neon outer glow & inner white core
+                cv2.line(drawing_canvas, prev_draw_pt, curr_pt, draw_color, 8, lineType=cv2.LINE_AA)
+                cv2.line(drawing_canvas, prev_draw_pt, curr_pt, (255, 255, 255), 2, lineType=cv2.LINE_AA)
+            prev_draw_pt = curr_pt
+        else:
+            prev_draw_pt = None
 
         # Handle Gestur Touch / Pinch untuk Ganti Filter Otomatis
         if is_pinched:
@@ -453,19 +505,39 @@ def main():
             fps = int(1.0 / (curr_time - prev_time + 1e-6))
             prev_time = curr_time
 
+        # Blend Drawing Canvas (Coret-coret) ke Output Frame
+        output_frame = cv2.add(output_frame, drawing_canvas)
+
+        # Indicating Drawing cursor tip if index finger is active
+        if is_drawing and single_info.get("index_tip") is not None:
+            tip_pos = single_info["index_tip"]
+            cv2.circle(output_frame, tip_pos, 10, draw_color, 2, lineType=cv2.LINE_AA)
+            cv2.circle(output_frame, tip_pos, 4, (255, 255, 255), -1, lineType=cv2.LINE_AA)
+
         # Top Header & Help Bar
         if show_hud:
-            cv2.rectangle(output_frame, (10, 10), (560, 45), (15, 15, 15), -1)
-            cv2.rectangle(output_frame, (10, 10), (560, 45), (255, 200, 0), 1)
+            cv2.rectangle(output_frame, (10, 10), (600, 45), (15, 15, 15), -1)
+            cv2.rectangle(output_frame, (10, 10), (600, 45), (255, 200, 0), 1)
             
-            status_text = "2-HANDS TRACKED" if hand_detected else ("MOUSE MODE" if mouse_mode else "MENCARI 2 TANGAN...")
+            if is_drawing:
+                status_text = "MODE CORETAN TELUNJUK (DRAWING)"
+                status_color = (0, 255, 255)
+            elif hand_detected:
+                status_text = f"{single_info.get('num_hands', 2)}-HANDS TRACKED"
+                status_color = (0, 255, 100)
+            elif mouse_mode:
+                status_text = "MOUSE MODE"
+                status_color = (200, 200, 200)
+            else:
+                status_text = "MENCARI TANGAN..."
+                status_color = (200, 200, 200)
+
             header_str = f"RETROLENS PORTAL | {status_text}"
-            status_color = (0, 255, 100) if hand_detected else (200, 200, 200)
             cv2.putText(output_frame, header_str, (20, 32),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.48, status_color, 1)
 
             cv2.rectangle(output_frame, (10, h - 35), (w - 10, h - 8), (15, 15, 15), -1)
-            help_str = "[Pinch Jari / 1-6] Ganti Filter | [SPACE] Foto | [G] Grain | [M] Mouse | [Q] Keluar"
+            help_str = "[1-Jari Telunjuk] Coret-coret | [C] Hapus Coretan | [1-6/Pinch] Filter | [SPACE] Foto | [Q] Keluar"
             cv2.putText(output_frame, help_str, (20, h - 15),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.43, (200, 200, 200), 1)
 
@@ -484,6 +556,9 @@ def main():
         elif key in [ord('1'), ord('2'), ord('3'), ord('4'), ord('5'), ord('6')]:
             filter_idx = (int(chr(key)) - 1) % len(FILTER_MODES)
             print(f"[INFO] Filter Lensa Diubah Ke: {FILTER_MODES[filter_idx][0]}")
+        elif key in [ord('c'), ord('C')]:
+            drawing_canvas.fill(0)
+            print("[INFO] Canvas Coretan Dibersihkan!")
         elif key in [ord(' '), ord('s'), ord('S')]:
             photo_count += 1
             filename = f"captures/retrolens_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"

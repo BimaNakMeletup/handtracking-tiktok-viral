@@ -1,0 +1,21 @@
+{
+  "name": "retrolens-hand-portal-web",
+  "version": "2.5.0",
+  "description": "TikTok viral Hand Camera Portal berbasis AI MediaPipe di Web Browser",
+  "main": "index.html",
+  "scripts": {
+    "start": "python server.py",
+    "serve": "npx -y serve . -l 8000"
+  },
+  "keywords": [
+    "handtracking",
+    "mediapipe",
+    "hand-portal",
+    "tiktok-viral",
+    "retro-camera",
+    "computer-vision",
+    "creative-coding"
+  ],
+  "author": "",
+  "license": "MIT"
+}

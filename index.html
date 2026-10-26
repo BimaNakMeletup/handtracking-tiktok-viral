@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>RETROLENS — Hand Camera Portal</title>
+  <meta name="description" content="TikTok viral Hand Camera Portal berbasis AI MediaPipe di Web Browser. Deteksi tangan membentuk portal lensa retro dengan tampilan minimalis & bersih.">
+
+  <!-- Google Fonts: Outfit (UI), JetBrains Mono (Numbers) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Lucide Icons (CDN) -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- MediaPipe Hands & Camera Utils CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-clean">
+  <div id="appContainer" class="app-container">
+    
+    <!-- Hidden Source Video Element -->
+    <video id="webcamVideo" playsinline autoplay muted style="display: none;"></video>
+
+    <!-- Camera Viewport Canvas -->
+    <div id="viewportWrapper" class="viewport-wrapper">
+      <canvas id="mainCanvas"></canvas>
+      
+      <!-- Shutter Flash Animation -->
+      <div id="flashOverlay" class="flash-overlay"></div>
+
+      <!-- Mouse Mode Draggable Corner Pins -->
+      <div id="mouseHandlesContainer" class="mouse-handles-container hidden">
+        <div class="corner-pin-handle" id="pin0" data-idx="0"><span>TL</span></div>
+        <div class="corner-pin-handle" id="pin1" data-idx="1"><span>BL</span></div>
+        <div class="corner-pin-handle" id="pin2" data-idx="2"><span>BR</span></div>
+        <div class="corner-pin-handle" id="pin3" data-idx="3"><span>TR</span></div>
+      </div>
+
+      <!-- Initial Loading & Permission Screen -->
+      <div id="cameraLoadingScreen" class="loading-screen">
+        <div class="loading-card glass-panel">
+          <div class="loading-pulse">
+            <i data-lucide="camera" class="pulse-icon"></i>
+          </div>
+          <h2 class="loading-title">RETROLENS PORTAL</h2>
+          <p id="loadingStatusText" class="loading-desc">Menginisialisasi kamera & AI Hand Tracking...</p>
+          <div class="loading-actions">
+            <button id="btnAllowCamera" class="btn btn-primary">
+              <i data-lucide="video"></i> Mulai Kamera
+            </button>
+            <button id="btnStartMouseMode" class="btn btn-secondary">
+              <i data-lucide="mouse-pointer-click"></i> Coba Mode Mouse
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Minimalist Top Bar -->
+    <header id="topBar" class="top-bar">
+      <!-- Left: Logo & Status Dot -->
+      <div class="top-left">
+        <div class="brand-badge">
+          <span class="status-dot" id="statusDot"></span>
+          <span class="brand-text">RETROLENS</span>
+          <span class="active-filter-tag" id="topFilterTag">MONO</span>
+        </div>
+      </div>
+
+      <!-- Center: Recording Timer (Hidden unless recording) -->
+      <div id="recIndicator" class="rec-pill hidden">
+        <span class="rec-dot"></span>
+        <span id="recTimer">00:00</span>
+      </div>
+
+      <!-- Right: Minimal Action Buttons -->
+      <div class="top-right">
+        <button id="btnMirrorToggle" class="icon-btn active" title="Cermin Kamera (Flip)">
+          <i data-lucide="flip-horizontal"></i>
+        </button>
+        <button id="btnSettingsToggle" class="icon-btn" title="Pengaturan & Opsi">
+          <i data-lucide="sliders-horizontal"></i>
+        </button>
+        <button id="btnHelpToggle" class="icon-btn" title="Panduan Gestur (?)">
+          <i data-lucide="help-circle"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Quick Floating Toast Notification -->
+    <div id="toastNotification" class="toast-notification hidden">
+      <span id="toastMessage">Filter diganti!</span>
+    </div>
+
+    <!-- Quick Intro Hint (Fades out automatically after 4 seconds) -->
+    <div id="quickIntroHint" class="quick-intro-hint">
+      <span>🖐️ Bentuk kotak dengan 2 tangan • 🤏 Pinch jempol & telunjuk untuk ganti filter</span>
+      <button id="btnCloseIntro" class="hint-dismiss">&times;</button>
+    </div>
+
+    <!-- Settings Dropdown Popover -->
+    <div id="settingsPopover" class="settings-popover glass-panel hidden">
+      <div class="settings-header">
+        <h4>Pengaturan Kamera</h4>
+        <button id="btnCloseSettings" class="close-btn"><i data-lucide="x"></i></button>
+      </div>
+      <div class="settings-body">
+        <div class="setting-row">
+          <span>Efek Suara SFX</span>
+          <button id="btnAudioToggle" class="pill-toggle active">ON</button>
+        </div>
+        <div class="setting-row">
+          <span>Film Grain</span>
+          <button id="btnGrainToggle" class="pill-toggle">MED</button>
+        </div>
+        <div class="setting-row">
+          <span>CRT Scanlines</span>
+          <button id="btnScanlineToggle" class="pill-toggle active">ON</button>
+        </div>
+        <div class="setting-row">
+          <span>Mode Mouse (Manual)</span>
+          <button id="btnMouseModeToggle" class="pill-toggle">OFF</button>
+        </div>
+        <div class="setting-row">
+          <span>Layar Penuh</span>
+          <button id="btnFullscreenToggle" class="pill-toggle"><i data-lucide="maximize" class="mini-icon"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Minimalist Bottom Controls -->
+    <footer id="bottomControls" class="bottom-controls">
+      <!-- 1. Horizontal Minimalist Filter Selector -->
+      <div class="filter-strip-wrapper">
+        <div id="filterPillsContainer" class="filter-strip">
+          <!-- Populated dynamically via app.js -->
+        </div>
+      </div>
+
+      <!-- 2. Clean Camera Shutter Row -->
+      <div class="shutter-row">
+        <!-- Left: Clear Drawing Canvas Button -->
+        <button id="btnClearCanvas" class="round-btn secondary-btn" title="Hapus Coretan Telunjuk (C)">
+          <i data-lucide="eraser"></i>
+        </button>
+
+        <!-- Center: Iconic Shutter Photo Button -->
+        <button id="btnCapturePhoto" class="shutter-btn" title="Ambil Foto (SPACE)">
+          <div class="shutter-btn-core"></div>
+        </button>
+
+        <!-- Video Record Button -->
+        <button id="btnRecordVideo" class="round-btn record-btn" title="Mulai / Berhenti Rekam Video (R)">
+          <span class="record-dot"></span>
+        </button>
+
+        <!-- Right: Gallery Button with badge -->
+        <button id="btnOpenGallery" class="round-btn secondary-btn gallery-trigger" title="Buka Galeri Foto & Video">
+          <i data-lucide="image"></i>
+          <span id="galleryCountBadge" class="gallery-badge hidden">0</span>
+        </button>
+      </div>
+    </footer>
+
+    <!-- Gallery Drawer Modal -->
+    <div id="galleryModal" class="modal-backdrop hidden">
+      <div class="modal-card glass-panel">
+        <div class="modal-header">
+          <div class="modal-title">
+            <i data-lucide="images"></i>
+            <h3>Galeri Hasil Tangkapan</h3>
+            <span id="galleryTotalItems" class="count-pill">0</span>
+          </div>
+          <button id="btnCloseGallery" class="modal-close-btn">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div id="galleryEmptyState" class="empty-state">
+            <i data-lucide="camera" class="empty-icon"></i>
+            <p>Belum ada foto atau video.</p>
+            <span>Tekan tombol shutter bulat atau [SPACE] untuk mengambil foto!</span>
+          </div>
+          <div id="galleryGrid" class="gallery-grid"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="btnClearGallery" class="btn btn-secondary danger">
+            <i data-lucide="trash-2"></i> Hapus Semua
+          </button>
+          <button id="btnCloseGalleryFooter" class="btn btn-primary">
+            Selesai
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Help & Gestures Modal -->
+    <div id="helpModal" class="modal-backdrop hidden">
+      <div class="modal-card glass-panel help-card">
+        <div class="modal-header">
+          <div class="modal-title">
+            <i data-lucide="sparkles"></i>
+            <h3>Cara Menggunakan Retrolens</h3>
+          </div>
+          <button id="btnCloseHelp" class="modal-close-btn">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="help-grid">
+            <div class="help-box">
+              <span class="box-icon">🖐️🖐️</span>
+              <h4>Bentuk Portal (2 Tangan)</h4>
+              <p>Arahkan 2 tangan ke kamera. Ujung telunjuk & jempol otomatis membentuk bingkai portal filter.</p>
+            </div>
+            <div class="help-box">
+              <span class="box-icon">🤏</span>
+              <h4>Ganti Filter (Pinch)</h4>
+              <p>Sentuhkan jempol & telunjuk bersamaan untuk mengganti filter lensa seketika.</p>
+            </div>
+            <div class="help-box">
+              <span class="box-icon">☝️</span>
+              <h4>Coretan Neon (1 Jari)</h4>
+              <p>Angkat 1 jari telunjuk untuk melukis dengan cahaya neon pelangi di udara.</p>
+            </div>
+          </div>
+
+          <div class="keyboard-tips">
+            <h4>Pintasan Tombol</h4>
+            <div class="keys-list">
+              <span><kbd>1-8</kbd> Pilih filter</span>
+              <span><kbd>SPACE</kbd> Foto</span>
+              <span><kbd>R</kbd> Rekam video</span>
+              <span><kbd>C</kbd> Hapus coretan</span>
+              <span><kbd>M</kbd> Mode mouse</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      if (window.lucide) {
+        window.lucide.createIcons();
+      }
+    });
+  </script>
+</body>
+</html>
