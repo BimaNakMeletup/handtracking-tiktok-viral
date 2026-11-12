@@ -373,10 +373,14 @@
   async function initCamera() {
     DOM.loadingStatusText.textContent = 'Menghubungkan ke kamera...';
     try {
+      const isPortrait = window.innerHeight > window.innerWidth;
+      const idealW = isPortrait ? 720 : CONFIG.targetWidth;
+      const idealH = isPortrait ? 1280 : CONFIG.targetHeight;
+
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width: { ideal: CONFIG.targetWidth },
-          height: { ideal: CONFIG.targetHeight },
+          width: { ideal: idealW },
+          height: { ideal: idealH },
           facingMode: 'user'
         },
         audio: false
@@ -386,13 +390,27 @@
       state.mediaStream = stream;
 
       await new Promise((resolve) => {
-        DOM.webcamVideo.onloadedmetadata = () => {
-          DOM.webcamVideo.play();
+        let isResolved = false;
+        const onReady = () => {
+          if (isResolved) return;
+          isResolved = true;
+          DOM.webcamVideo.play().catch(() => {});
           resolve();
         };
+
+        if (DOM.webcamVideo.readyState >= 1 && DOM.webcamVideo.videoWidth > 0) {
+          onReady();
+        } else {
+          DOM.webcamVideo.onloadedmetadata = onReady;
+          DOM.webcamVideo.onloadeddata = onReady;
+          // Fallback timeout
+          setTimeout(onReady, 1000);
+        }
       });
 
-      resizeCanvases(DOM.webcamVideo.videoWidth || CONFIG.targetWidth, DOM.webcamVideo.videoHeight || CONFIG.targetHeight);
+      const actualW = DOM.webcamVideo.videoWidth || idealW;
+      const actualH = DOM.webcamVideo.videoHeight || idealH;
+      resizeCanvases(actualW, actualH);
       initMediaPipe();
     } catch (err) {
       console.warn('Webcam error:', err);
@@ -401,6 +419,9 @@
   }
 
   function resizeCanvases(w, h) {
+    if (!w || !h) return;
+    if (state.canvasWidth === w && state.canvasHeight === h) return;
+
     state.canvasWidth = w;
     state.canvasHeight = h;
     DOM.mainCanvas.width = w;
@@ -409,6 +430,13 @@
     drawingCanvas.height = h;
     filterCanvas.width = w;
     filterCanvas.height = h;
+
+    state.smoothQuad = [
+      { x: Math.round(w * 0.25), y: Math.round(h * 0.25) },
+      { x: Math.round(w * 0.25), y: Math.round(h * 0.75) },
+      { x: Math.round(w * 0.75), y: Math.round(h * 0.75) },
+      { x: Math.round(w * 0.75), y: Math.round(h * 0.25) }
+    ];
 
     state.mousePts = [
       { x: Math.round(w * 0.25), y: Math.round(h * 0.25) },
@@ -440,18 +468,22 @@
     handsTracker.onResults(onHandResults);
 
     if (typeof window.Camera !== 'undefined') {
+      const isPortrait = window.innerHeight > window.innerWidth;
       const cam = new window.Camera(DOM.webcamVideo, {
         onFrame: async () => {
-          if (!state.mouseMode) {
+          if (!state.mouseMode && DOM.webcamVideo.readyState >= 2) {
             await handsTracker.send({ image: DOM.webcamVideo });
           }
         },
-        width: state.canvasWidth,
-        height: state.canvasHeight
+        width: state.canvasWidth || (isPortrait ? 720 : 1280),
+        height: state.canvasHeight || (isPortrait ? 1280 : 720)
       });
       cam.start().then(() => {
         DOM.loadingScreen.classList.add('hidden');
         state.cameraRunning = true;
+        if (DOM.webcamVideo.videoWidth && DOM.webcamVideo.videoHeight) {
+          resizeCanvases(DOM.webcamVideo.videoWidth, DOM.webcamVideo.videoHeight);
+        }
         requestAnimationFrame(renderLoop);
       }).catch(() => {
         DOM.loadingScreen.classList.add('hidden');
@@ -630,6 +662,16 @@
   // ==========================================
   function renderLoop() {
     state.frameCount++;
+
+    // Dynamically sync canvas resolution to webcam's real aspect ratio
+    if (DOM.webcamVideo.readyState >= 2 && DOM.webcamVideo.videoWidth > 0 && DOM.webcamVideo.videoHeight > 0) {
+      const vw = DOM.webcamVideo.videoWidth;
+      const vh = DOM.webcamVideo.videoHeight;
+      if (state.canvasWidth !== vw || state.canvasHeight !== vh) {
+        resizeCanvases(vw, vh);
+      }
+    }
+
     const w = state.canvasWidth;
     const h = state.canvasHeight;
 
@@ -1232,7 +1274,19 @@
     });
 
     window.addEventListener('resize', () => {
+      if (DOM.webcamVideo.readyState >= 2 && DOM.webcamVideo.videoWidth > 0) {
+        resizeCanvases(DOM.webcamVideo.videoWidth, DOM.webcamVideo.videoHeight);
+      }
       if (state.mouseMode) updateMousePinDOM();
+    });
+
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => {
+        if (DOM.webcamVideo.readyState >= 2 && DOM.webcamVideo.videoWidth > 0) {
+          resizeCanvases(DOM.webcamVideo.videoWidth, DOM.webcamVideo.videoHeight);
+        }
+        if (state.mouseMode) updateMousePinDOM();
+      }, 300);
     });
 
     setupMouseDrag();

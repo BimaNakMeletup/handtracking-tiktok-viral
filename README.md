@@ -61,4 +61,4 @@ Versi web murni client-side (static), sehingga bisa langsung di-host di Vercel:
 1. Push repository ini ke GitHub.
 2. Import project di dashboard [Vercel](https://vercel.com).
 3. Pada opsi **Application Preset**, pilih **Other** (bukan Python).
-4. Klik **Deploy**.
+4. Klik **Deploy**.  
